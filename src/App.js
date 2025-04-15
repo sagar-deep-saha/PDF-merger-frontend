@@ -22,6 +22,9 @@ import {
 } from '@mui/icons-material';
 import axios from 'axios';
 
+// API endpoint configuration
+const API_BASE_URL = 'https://pdf-merger-backend-nu.vercel.app';
+
 function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -60,7 +63,7 @@ function App() {
     });
 
     try {
-      const response = await axios.post('http://localhost:5000/api/merge-pdfs', formData, {
+      const response = await axios.post(`${API_BASE_URL}/api/merge-pdfs`, formData, {
         responseType: 'blob',
         headers: {
           'Content-Type': 'multipart/form-data',
