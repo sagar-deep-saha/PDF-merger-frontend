@@ -1,24 +1,309 @@
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from 'react';
+import {
+  Container,
+  Box,
+  Typography,
+  Button,
+  Paper,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  IconButton,
+  CircularProgress,
+  Alert,
+  useTheme,
+  alpha,
+} from '@mui/material';
+import {
+  CloudUpload as CloudUploadIcon,
+  Delete as DeleteIcon,
+  PictureAsPdf as PdfIcon,
+} from '@mui/icons-material';
+import axios from 'axios';
 
 function App() {
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const theme = useTheme();
+
+  const handleFileSelect = (event) => {
+    const selectedFiles = Array.from(event.target.files);
+    const invalidFiles = selectedFiles.filter(file => !file.type.includes('pdf'));
+    if (invalidFiles.length > 0) {
+      setError('Please select only PDF files');
+      return;
+    }
+    setFiles(prevFiles => [...prevFiles, ...selectedFiles]);
+    setError('');
+  };
+
+  const handleRemoveFile = (index) => {
+    setFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
+  };
+
+  const handleMerge = async () => {
+    if (files.length < 2) {
+      setError('Please select at least 2 PDF files to merge');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setSuccess('');
+
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('pdfs', file);
+    });
+
+    try {
+      const response = await axios.post('http://localhost:5000/api/merge-pdfs', formData, {
+        responseType: 'blob',
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000,
+        validateStatus: status => status === 200,
+      });
+
+      const contentType = response.headers['content-type'];
+      if (!contentType || !contentType.includes('application/pdf')) {
+        throw new Error('Invalid response from server');
+      }
+
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'merged.pdf');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      setSuccess('PDFs merged successfully!');
+      setFiles([]);
+    } catch (err) {
+      console.error('Error merging PDFs:', err);
+      if (err.response) {
+        if (err.response.data instanceof Blob) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            try {
+              const errorData = JSON.parse(reader.result);
+              setError(errorData.error || 'Error merging PDFs. Please try again.');
+            } catch (e) {
+              setError('Error merging PDFs. Please try again.');
+            }
+          };
+          reader.readAsText(err.response.data);
+        } else {
+          setError(err.response.data.error || 'Error merging PDFs. Please try again.');
+        }
+      } else if (err.request) {
+        setError('No response from server. Please check if the server is running.');
+      } else {
+        setError(err.message || 'Error merging PDFs. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
+    <Box
+      sx={{
+        minHeight: '100vh',
+        background: `linear-gradient(45deg, ${alpha(theme.palette.primary.main, 0.05)} 30%, ${alpha(theme.palette.secondary.main, 0.05)} 90%)`,
+        py: 4,
+      }}
+    >
+      <Container maxWidth="md">
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 3,
+          }}
         >
-          Learn React
-        </a>
-      </header>
-    </div>
+          <Typography
+            variant="h3"
+            component="h1"
+            sx={{
+              fontWeight: 700,
+              background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              color: 'transparent',
+              textAlign: 'center',
+              mb: 1,
+            }}
+          >
+            PDF Merger
+          </Typography>
+          <Typography
+            variant="subtitle1"
+            sx={{
+              color: 'text.secondary',
+              textAlign: 'center',
+              maxWidth: '600px',
+              mb: 2,
+            }}
+          >
+            Select multiple PDF files to merge them into a single document
+          </Typography>
+
+          <Paper
+            elevation={3}
+            sx={{
+              p: 4,
+              width: '100%',
+              maxWidth: '800px',
+              backgroundColor: 'background.paper',
+              borderRadius: 2,
+              border: '2px dashed',
+              borderColor: theme.palette.primary.main,
+              transition: 'all 0.3s ease',
+              '&:hover': {
+                borderColor: theme.palette.primary.dark,
+                boxShadow: theme.shadows[8],
+              },
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 3,
+              }}
+            >
+              <input
+                accept="application/pdf"
+                style={{ display: 'none' }}
+                id="raised-button-file"
+                multiple
+                type="file"
+                onChange={handleFileSelect}
+              />
+              <label htmlFor="raised-button-file">
+                <Button
+                  variant="contained"
+                  component="span"
+                  startIcon={<CloudUploadIcon />}
+                  size="large"
+                  sx={{
+                    py: 1.5,
+                    px: 3,
+                    borderRadius: 2,
+                    textTransform: 'none',
+                    fontSize: '1.1rem',
+                    boxShadow: theme.shadows[4],
+                    '&:hover': {
+                      boxShadow: theme.shadows[8],
+                    },
+                  }}
+                >
+                  Select PDF Files
+                </Button>
+              </label>
+
+              {files.length > 0 && (
+                <List sx={{ width: '100%', bgcolor: 'background.paper' }}>
+                  {files.map((file, index) => (
+                    <ListItem
+                      key={index}
+                      sx={{
+                        mb: 1,
+                        borderRadius: 1,
+                        bgcolor: alpha(theme.palette.primary.main, 0.05),
+                        '&:hover': {
+                          bgcolor: alpha(theme.palette.primary.main, 0.1),
+                        },
+                      }}
+                      secondaryAction={
+                        <IconButton
+                          edge="end"
+                          onClick={() => handleRemoveFile(index)}
+                          sx={{
+                            color: theme.palette.error.main,
+                            '&:hover': {
+                              bgcolor: alpha(theme.palette.error.main, 0.1),
+                            },
+                          }}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      }
+                    >
+                      <ListItemIcon>
+                        <PdfIcon sx={{ color: theme.palette.primary.main }} />
+                      </ListItemIcon>
+                      <ListItemText
+                        primary={file.name}
+                        secondary={`${(file.size / 1024 / 1024).toFixed(2)} MB`}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              )}
+
+              {error && (
+                <Alert
+                  severity="error"
+                  sx={{
+                    width: '100%',
+                    borderRadius: 2,
+                  }}
+                >
+                  {error}
+                </Alert>
+              )}
+
+              {success && (
+                <Alert
+                  severity="success"
+                  sx={{
+                    width: '100%',
+                    borderRadius: 2,
+                  }}
+                >
+                  {success}
+                </Alert>
+              )}
+
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleMerge}
+                disabled={files.length < 2 || loading}
+                size="large"
+                sx={{
+                  py: 1.5,
+                  px: 4,
+                  borderRadius: 2,
+                  textTransform: 'none',
+                  fontSize: '1.1rem',
+                  boxShadow: theme.shadows[4],
+                  '&:hover': {
+                    boxShadow: theme.shadows[8],
+                  },
+                }}
+              >
+                {loading ? (
+                  <CircularProgress size={24} color="inherit" />
+                ) : (
+                  'Merge PDFs'
+                )}
+              </Button>
+            </Box>
+          </Paper>
+        </Box>
+      </Container>
+    </Box>
   );
 }
 
