@@ -14,24 +14,20 @@ import {
   Alert,
   useTheme,
   alpha,
+  LinearProgress,
 } from '@mui/material';
 import {
   CloudUpload as CloudUploadIcon,
   Delete as DeleteIcon,
   PictureAsPdf as PdfIcon,
+  InfoOutlined as InfoIcon,
 } from '@mui/icons-material';
-import axios from 'axios';
-
-// API endpoint configuration
-const API_BASE_URL = 'https://pdf-merger-backend-nu.vercel.app';
-
-// Configure axios defaults
-axios.defaults.timeout = 60000; // 60 seconds timeout for large files
-axios.defaults.headers.common['Accept'] = 'application/pdf';
+import { PDFDocument } from 'pdf-lib';
 
 function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const theme = useTheme();
@@ -39,16 +35,74 @@ function App() {
   const handleFileSelect = (event) => {
     const selectedFiles = Array.from(event.target.files);
     const invalidFiles = selectedFiles.filter(file => !file.type.includes('pdf'));
+    
     if (invalidFiles.length > 0) {
       setError('Please select only PDF files');
       return;
     }
+    
+    // Limit total size to avoid browser memory issues
+    const totalSize = [...files, ...selectedFiles].reduce((sum, file) => sum + file.size, 0);
+    const maxSize = 100 * 1024 * 1024; // 100MB
+    
+    if (totalSize > maxSize) {
+      setError('Total file size exceeds 100MB. Please select smaller files.');
+      return;
+    }
+    
     setFiles(prevFiles => [...prevFiles, ...selectedFiles]);
     setError('');
   };
 
   const handleRemoveFile = (index) => {
     setFiles(prevFiles => prevFiles.filter((_, i) => i !== index));
+  };
+
+  const mergePDFs = async (pdfFiles) => {
+    try {
+      // Create a new PDF document
+      const mergedPdf = await PDFDocument.create();
+      
+      // Set initial progress
+      setProgress(0);
+      
+      // Process each PDF file
+      for (let i = 0; i < pdfFiles.length; i++) {
+        // Update progress
+        setProgress((i / pdfFiles.length) * 100);
+        
+        // Get file data
+        const file = pdfFiles[i];
+        const fileData = await readFileAsArrayBuffer(file);
+        
+        // Load the PDF document
+        const pdfDoc = await PDFDocument.load(fileData);
+        
+        // Copy all pages from the current document to the merged document
+        const pages = await mergedPdf.copyPages(pdfDoc, pdfDoc.getPageIndices());
+        pages.forEach(page => mergedPdf.addPage(page));
+      }
+      
+      // Save the merged PDF
+      const mergedPdfBytes = await mergedPdf.save();
+      
+      // Convert to Blob and return
+      setProgress(100);
+      return new Blob([mergedPdfBytes], { type: 'application/pdf' });
+    } catch (error) {
+      console.error('Error merging PDFs:', error);
+      throw new Error(`Failed to merge PDFs: ${error.message}`);
+    }
+  };
+  
+  // Helper function to read file as ArrayBuffer
+  const readFileAsArrayBuffer = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
   };
 
   const handleMerge = async () => {
@@ -61,85 +115,30 @@ function App() {
     setError('');
     setSuccess('');
 
-    const formData = new FormData();
-    files.forEach(file => {
-      formData.append('pdfs', file);
-    });
-
     try {
-      console.log('Sending request to:', `${API_BASE_URL}/api/merge-pdfs`);
+      console.log('Starting client-side PDF merge');
       
-      // First check if the API is accessible
-      try {
-        await fetch(`${API_BASE_URL}/api/test`, { method: 'GET' });
-      } catch (checkError) {
-        console.error('API check failed:', checkError);
-        throw new Error('Unable to connect to the server. Please try again later.');
-      }
+      // Merge PDFs client-side
+      const mergedPdfBlob = await mergePDFs(files);
       
-      const response = await axios.post(`${API_BASE_URL}/api/merge-pdfs`, formData, {
-        responseType: 'blob',
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 60000, // 60 seconds timeout for large files
-        validateStatus: status => status === 200,
-        // Add withCredentials to handle CORS properly
-        withCredentials: false,
-      });
-
-      console.log('Response received:', response.status);
-      const contentType = response.headers['content-type'];
-      if (!contentType || !contentType.includes('application/pdf')) {
-        console.error('Invalid content type:', contentType);
-        throw new Error('Invalid response from server');
-      }
-
-      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      // Create download link
+      const url = URL.createObjectURL(mergedPdfBlob);
       const link = document.createElement('a');
       link.href = url;
       link.setAttribute('download', 'merged.pdf');
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
 
       setSuccess('PDFs merged successfully!');
       setFiles([]);
     } catch (err) {
-      console.error('Error merging PDFs:', err);
-      
-      // Enhanced error detection and user feedback
-      if (err.message && err.message.includes('connect to the server')) {
-        setError(err.message);
-      } else if (err.code === 'ECONNABORTED') {
-        setError('Request timed out. The files might be too large. Please try with smaller files (under 10MB total).');
-      } else if (err.response) {
-        // The request was made and the server responded with a non-2xx status
-        if (err.response.status === 413) {
-          setError('Files too large. Please upload smaller files (under 10MB total).');
-        } else if (err.response.data instanceof Blob) {
-          const reader = new FileReader();
-          reader.onload = () => {
-            try {
-              const errorData = JSON.parse(reader.result);
-              setError(errorData.error || 'Error merging PDFs. Please try again.');
-            } catch (e) {
-              setError('Error merging PDFs. Please try again.');
-            }
-          };
-          reader.readAsText(err.response.data);
-        } else {
-          setError(err.response.data.error || 'Error merging PDFs. Please try again.');
-        }
-      } else if (err.request) {
-        // The request was made but no response was received
-        setError('No response from server. This may be due to server limitations with large files. Please try with fewer or smaller PDFs.');
-      } else {
-        setError(err.message || 'Error merging PDFs. Please try again.');
-      }
+      console.error('Error in client-side PDF merging:', err);
+      setError(`Error merging PDFs: ${err.message}. Try with fewer or smaller files.`);
     } finally {
       setLoading(false);
+      setProgress(0);
     }
   };
 
@@ -186,6 +185,14 @@ function App() {
           >
             Select multiple PDF files to merge them into a single document
           </Typography>
+
+          <Alert 
+            severity="info" 
+            icon={<InfoIcon />}
+            sx={{ width: '100%', maxWidth: '800px', mb: 2 }}
+          >
+            This tool merges PDFs directly in your browser. No files are uploaded to any server.
+          </Alert>
 
           <Paper
             elevation={3}
@@ -304,6 +311,15 @@ function App() {
                 >
                   {success}
                 </Alert>
+              )}
+
+              {loading && (
+                <Box sx={{ width: '100%', mt: 2, mb: 2 }}>
+                  <LinearProgress variant="determinate" value={progress} />
+                  <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+                    Processing... {Math.round(progress)}%
+                  </Typography>
+                </Box>
               )}
 
               <Button
