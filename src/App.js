@@ -25,6 +25,10 @@ import axios from 'axios';
 // API endpoint configuration
 const API_BASE_URL = 'https://pdf-merger-backend-nu.vercel.app';
 
+// Configure axios defaults
+axios.defaults.timeout = 60000; // 60 seconds timeout for large files
+axios.defaults.headers.common['Accept'] = 'application/pdf';
+
 function App() {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -63,17 +67,20 @@ function App() {
     });
 
     try {
+      console.log('Sending request to:', `${API_BASE_URL}/api/merge-pdfs`);
       const response = await axios.post(`${API_BASE_URL}/api/merge-pdfs`, formData, {
         responseType: 'blob',
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 30000,
+        timeout: 60000, // 60 seconds timeout for large files
         validateStatus: status => status === 200,
       });
 
+      console.log('Response received:', response.status);
       const contentType = response.headers['content-type'];
       if (!contentType || !contentType.includes('application/pdf')) {
+        console.error('Invalid content type:', contentType);
         throw new Error('Invalid response from server');
       }
 
@@ -106,7 +113,9 @@ function App() {
           setError(err.response.data.error || 'Error merging PDFs. Please try again.');
         }
       } else if (err.request) {
-        setError('No response from server. Please check if the server is running.');
+        setError('No response from server. Please check your internet connection and try again.');
+      } else if (err.code === 'ECONNABORTED') {
+        setError('Request timed out. The files might be too large. Please try with smaller files.');
       } else {
         setError(err.message || 'Error merging PDFs. Please try again.');
       }
