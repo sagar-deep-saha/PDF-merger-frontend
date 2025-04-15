@@ -68,6 +68,15 @@ function App() {
 
     try {
       console.log('Sending request to:', `${API_BASE_URL}/api/merge-pdfs`);
+      
+      // First check if the API is accessible
+      try {
+        await fetch(`${API_BASE_URL}/api/test`, { method: 'GET' });
+      } catch (checkError) {
+        console.error('API check failed:', checkError);
+        throw new Error('Unable to connect to the server. Please try again later.');
+      }
+      
       const response = await axios.post(`${API_BASE_URL}/api/merge-pdfs`, formData, {
         responseType: 'blob',
         headers: {
@@ -75,6 +84,8 @@ function App() {
         },
         timeout: 60000, // 60 seconds timeout for large files
         validateStatus: status => status === 200,
+        // Add withCredentials to handle CORS properly
+        withCredentials: false,
       });
 
       console.log('Response received:', response.status);
@@ -97,8 +108,17 @@ function App() {
       setFiles([]);
     } catch (err) {
       console.error('Error merging PDFs:', err);
-      if (err.response) {
-        if (err.response.data instanceof Blob) {
+      
+      // Enhanced error detection and user feedback
+      if (err.message && err.message.includes('connect to the server')) {
+        setError(err.message);
+      } else if (err.code === 'ECONNABORTED') {
+        setError('Request timed out. The files might be too large. Please try with smaller files (under 10MB total).');
+      } else if (err.response) {
+        // The request was made and the server responded with a non-2xx status
+        if (err.response.status === 413) {
+          setError('Files too large. Please upload smaller files (under 10MB total).');
+        } else if (err.response.data instanceof Blob) {
           const reader = new FileReader();
           reader.onload = () => {
             try {
@@ -113,9 +133,8 @@ function App() {
           setError(err.response.data.error || 'Error merging PDFs. Please try again.');
         }
       } else if (err.request) {
-        setError('No response from server. Please check your internet connection and try again.');
-      } else if (err.code === 'ECONNABORTED') {
-        setError('Request timed out. The files might be too large. Please try with smaller files.');
+        // The request was made but no response was received
+        setError('No response from server. This may be due to server limitations with large files. Please try with fewer or smaller PDFs.');
       } else {
         setError(err.message || 'Error merging PDFs. Please try again.');
       }
